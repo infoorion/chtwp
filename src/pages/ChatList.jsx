@@ -18,7 +18,7 @@ const ChatList = () => {
       const chats = await apiFetch(`/conversations/${user.id}`);
       setRecentChats(chats);
       setLoading(false);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error('[API] Fetch error:', err); }
   };
 
   useEffect(() => {
@@ -27,7 +27,6 @@ const ChatList = () => {
     socket.emit('join', user);
     
     socket.on('presence', (users) => {
-      console.log('[Presence] Updating:', users);
       const others = users.filter(u => String(u.id) !== String(user.id));
       setOnlineUsers(others);
     });
@@ -41,52 +40,74 @@ const ChatList = () => {
   }, [user]);
 
   const handleUpdateAvatar = async (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
-    const r = new FileReader();
-    r.onload = async () => {
-      const data = await apiFetch('/update-profile', {
-        method: 'POST',
-        body: JSON.stringify({ userId: user.id, avatar: r.result })
-      });
-      if (data.id) {
-        setUser(data);
-        localStorage.setItem('sgram_user', JSON.stringify(data));
-        setShowProfile(false);
+    
+    console.log('[Profile] File selected:', file.name);
+    
+    const reader = new FileReader();
+    reader.onloadstart = () => console.log('[Profile] Reading file...');
+    reader.onloadend = async () => {
+      const base64 = reader.result;
+      console.log('[Profile] File read complete. Uploading to server...');
+      
+      try {
+        const response = await apiFetch('/update-profile', {
+          method: 'POST',
+          body: JSON.stringify({ userId: String(user.id), avatar: base64 })
+        });
+        
+        if (response && response.id) {
+          console.log('[Profile] Update success!');
+          setUser(response);
+          localStorage.setItem('sgram_user', JSON.stringify(response));
+          setShowProfile(false);
+          // Force a small delay then refresh UI data
+          setTimeout(fetchData, 500);
+        } else {
+          console.error('[Profile] Server returned error:', response);
+          alert('Error: ' + (response?.error || 'Unknown error'));
+        }
+      } catch (err) {
+        console.error('[Profile] Network error:', err);
+        alert('Could not connect to server to update photo.');
       }
     };
-    r.readAsDataURL(file);
+    reader.onerror = (err) => console.error('[Profile] FileReader error:', err);
+    reader.readAsDataURL(file);
   };
 
   const isOnline = (userId) => onlineUsers.some(u => String(u.id) === String(userId));
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="chats-screen-v3">
-      <header className="chats-header-v3">
-        <div className="header-left-v3" onClick={() => setShowProfile(true)}>
-          <div className="user-avatar-ring">
-            <img src={user?.avatar} alt="Me" />
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-home-screen">
+      <header className="p-home-header">
+        <div className="p-user-profile" onClick={() => setShowProfile(true)}>
+          <div className="p-avatar-border">
+            <img src={user?.avatar} alt="Profile" />
           </div>
-          <h1 className="brand-logo-v3">sgram</h1>
+          <div className="p-brand">
+            <h1>sgram</h1>
+            <span>{user?.username}</span>
+          </div>
         </div>
-        <button className="logout-btn-v3" onClick={logout}><LogOut size={20} /></button>
+        <button className="p-logout" onClick={logout}><LogOut size={22} /></button>
       </header>
 
-      <div className="search-section">
-        <div className="search-input-v3">
+      <div className="p-search-container">
+        <div className="p-search-box">
           <Search size={18} />
-          <input placeholder="Search chats..." />
+          <input placeholder="Search friends & chats..." />
         </div>
       </div>
 
-      {/* Online Now - Horizontal Scroll */}
-      <div className="online-now-v3">
-        <h3 className="section-title-v3">Online Now</h3>
-        <div className="online-scroll-v3">
-          <div className="online-user-v3 me">
-            <div className="avatar-circle">
+      <div className="p-online-section">
+        <h3 className="p-section-title">Online Now</h3>
+        <div className="p-online-list">
+          <div className="p-online-card me">
+            <div className="p-avatar-lg">
               <img src={user?.avatar} alt="" />
-              <div className="status-indicator active" />
+              <div className="p-online-dot active" />
             </div>
             <span>You</span>
           </div>
@@ -94,47 +115,42 @@ const ChatList = () => {
             {onlineUsers.map(u => (
               <motion.div 
                 key={u.id}
-                initial={{ scale: 0, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0, opacity: 0 }}
-                className="online-user-v3"
+                initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
+                className="p-online-card"
                 onClick={() => navigate(`/chat/${u.id}`)}
               >
-                <div className="avatar-circle pulse">
+                <div className="p-avatar-lg glow">
                   <img src={u.avatar} alt="" />
-                  <div className="status-indicator active" />
+                  <div className="p-online-dot active" />
                 </div>
                 <span>{u.username}</span>
               </motion.div>
             ))}
           </AnimatePresence>
-          {onlineUsers.length === 0 && (
-            <p className="no-online-text">No friends online</p>
-          )}
         </div>
       </div>
 
-      <div className="recent-chats-v3">
-        <h3 className="section-title-v3">Recent Messages</h3>
-        <div className="chat-list-v3">
+      <div className="p-chats-section">
+        <h3 className="p-section-title">Recent Chats</h3>
+        <div className="p-chat-scroll">
           {recentChats.length === 0 && !loading ? (
-            <div className="empty-chats">
-              <MessageSquare size={48} opacity={0.2} />
-              <p>Your recent conversations will appear here.</p>
+            <div className="p-empty-chats">
+              <MessageSquare size={48} opacity={0.1} />
+              <p>Your inbox is empty</p>
             </div>
           ) : (
             recentChats.map((chat) => (
-              <div key={chat.id} className="chat-row-v3" onClick={() => navigate(`/chat/${chat.id}`)}>
-                <div className="avatar-main">
+              <div key={chat.id} className="p-chat-item" onClick={() => navigate(`/chat/${chat.id}`)}>
+                <div className="p-avatar-md">
                   <img src={chat.avatar} alt="" />
-                  {isOnline(chat.id) && <div className="online-dot-v3" />}
+                  {isOnline(chat.id) && <div className="p-dot-mini" />}
                 </div>
-                <div className="chat-text">
-                  <div className="chat-row-top-v3">
+                <div className="p-chat-info">
+                  <div className="p-chat-top">
                     <h3>{chat.username}</h3>
                     <span>{chat.lastMessage ? new Date(chat.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                   </div>
-                  <p>{chat.lastMessage?.text || 'Tap to chat'}</p>
+                  <p>{chat.lastMessage?.text || 'Sent a media file'}</p>
                 </div>
               </div>
             ))
@@ -145,74 +161,82 @@ const ChatList = () => {
       {/* Profile Modal */}
       <AnimatePresence>
         {showProfile && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="modal-overlay">
-            <motion.div initial={{ y: 50 }} animate={{ y: 0 }} className="profile-modal-v3">
-              <div className="modal-top">
-                <h2>Settings</h2>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-modal-overlay">
+            <motion.div initial={{ y: 100 }} animate={{ y: 0 }} className="p-profile-modal">
+              <div className="p-modal-head">
+                <h2>Profile Settings</h2>
                 <button onClick={() => setShowProfile(false)}><X /></button>
               </div>
-              <div className="profile-edit-box">
-                <div className="profile-avatar-large">
-                  <img src={user?.avatar} alt="" />
-                  <label className="edit-btn"><Camera size={20} /><input type="file" hidden onChange={handleUpdateAvatar} /></label>
+              <div className="p-profile-edit">
+                <div className="p-avatar-huge">
+                  <img src={user?.avatar} alt="Current Profile" />
+                  {/* Fixed Label/Input Connection */}
+                  <label htmlFor="profile-upload" className="p-cam-btn">
+                    <Camera size={26} />
+                  </label>
+                  <input 
+                    id="profile-upload"
+                    type="file" 
+                    accept="image/*" 
+                    hidden 
+                    onChange={handleUpdateAvatar} 
+                  />
                 </div>
-                <div className="user-details-v3">
+                <div className="p-user-meta">
                   <h3>{user?.username}</h3>
                   <p>{user?.phone}</p>
                 </div>
               </div>
-              <button className="close-modal-btn" onClick={() => setShowProfile(false)}>Close</button>
+              <button className="p-save-btn" onClick={() => setShowProfile(false)}>Close</button>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
       <style>{`
-        .chats-screen-v3 { height: 100vh; display: flex; flex-direction: column; background: #000; color: white; max-width: 500px; margin: 0 auto; overflow: hidden; }
-        .chats-header-v3 { display: flex; justify-content: space-between; align-items: center; padding: 20px 16px; }
-        .header-left-v3 { display: flex; align-items: center; gap: 12px; cursor: pointer; }
-        .user-avatar-ring { width: 34px; height: 34px; border-radius: 50%; padding: 2px; background: var(--gradient-insta); }
-        .user-avatar-ring img { width: 100%; height: 100%; border-radius: 50%; border: 1px solid #000; }
-        .brand-logo-v3 { font-size: 26px; font-weight: 800; background: var(--gradient-insta); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-family: 'Outfit', sans-serif; }
-        .logout-btn-v3 { color: #ed4956; padding: 8px; border-radius: 50%; background: #1a1a1a; }
-        .search-section { padding: 0 16px 16px; }
-        .search-input-v3 { background: #121212; border-radius: 12px; display: flex; align-items: center; padding: 12px 16px; gap: 12px; color: #8e8e8e; border: 1px solid #1a1a1a; }
-        .search-input-v3 input { background: transparent; border: none; color: white; flex: 1; outline: none; font-size: 14px; }
-        .section-title-v3 { font-size: 13px; font-weight: 700; color: #8e8e8e; text-transform: uppercase; letter-spacing: 0.5px; padding: 0 16px 12px; }
-        .online-now-v3 { padding-bottom: 20px; border-bottom: 1px solid #1a1a1a; }
-        .online-scroll-v3 { display: flex; gap: 18px; padding: 0 16px; overflow-x: auto; scrollbar-width: none; align-items: center; }
-        .online-user-v3 { display: flex; flex-direction: column; align-items: center; gap: 8px; flex-shrink: 0; cursor: pointer; }
-        .avatar-circle { width: 62px; height: 62px; position: relative; border-radius: 50%; padding: 3px; border: 2px solid #262626; }
-        .avatar-circle.pulse { border-color: var(--accent); }
-        .avatar-circle img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
-        .status-indicator { position: absolute; bottom: 3px; right: 3px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #000; background: #8e8e8e; }
-        .status-indicator.active { background: #4caf50; box-shadow: 0 0 8px #4caf50; }
-        .online-user-v3 span { font-size: 11px; font-weight: 500; color: #a8a8a8; }
-        .no-online-text { font-size: 12px; color: #333; padding-left: 10px; }
-        .recent-chats-v3 { flex: 1; padding-top: 20px; display: flex; flex-direction: column; }
-        .chat-list-v3 { flex: 1; overflow-y: auto; }
-        .chat-row-v3 { display: flex; align-items: center; gap: 14px; padding: 14px 16px; transition: background 0.2s; cursor: pointer; }
-        .chat-row-v3:active { background: #0a0a0a; }
-        .avatar-main { position: relative; width: 56px; height: 56px; }
-        .avatar-main img { width: 100%; height: 100%; border-radius: 50%; }
-        .online-dot-v3 { position: absolute; bottom: 2px; right: 2px; width: 14px; height: 14px; background: #4caf50; border: 2px solid #000; border-radius: 50%; }
-        .chat-text { flex: 1; border-bottom: 0.5px solid #1a1a1a; padding-bottom: 14px; }
-        .chat-row-top-v3 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-        .chat-row-top-v3 h3 { font-size: 15px; font-weight: 700; color: #efefef; }
-        .chat-row-top-v3 span { font-size: 12px; color: #8e8e8e; }
-        .chat-text p { font-size: 13px; color: #8e8e8e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-        .empty-chats { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #444; text-align: center; padding: 40px; }
-        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
-        .profile-modal-v3 { background: #121212; width: 100%; max-width: 400px; border-radius: 30px; padding: 30px; border: 1px solid #262626; }
-        .modal-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; }
-        .profile-edit-box { display: flex; flex-direction: column; align-items: center; gap: 20px; margin-bottom: 40px; }
-        .profile-avatar-large { position: relative; width: 110px; height: 110px; }
-        .profile-avatar-large img { width: 100%; height: 100%; border-radius: 50%; border: 2px solid var(--accent); }
-        .edit-btn { position: absolute; bottom: 0; right: 0; background: var(--accent); padding: 8px; border-radius: 50%; cursor: pointer; }
-        .user-details-v3 { text-align: center; }
-        .user-details-v3 h3 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-        .user-details-v3 p { color: #8e8e8e; }
-        .close-modal-btn { width: 100%; background: #262626; color: #fff; padding: 16px; border-radius: 16px; font-weight: 700; }
+        .p-home-screen { height: 100vh; display: flex; flex-direction: column; background: #09090b; color: white; max-width: 500px; margin: 0 auto; overflow: hidden; position: relative; }
+        .p-home-header { display: flex; justify-content: space-between; align-items: center; padding: 24px 16px; background: rgba(9,9,11,0.5); backdrop-filter: blur(10px); }
+        .p-user-profile { display: flex; align-items: center; gap: 14px; cursor: pointer; }
+        .p-avatar-border { width: 44px; height: 44px; border-radius: 50%; padding: 2px; background: var(--gradient-premium); }
+        .p-avatar-border img { width: 100%; height: 100%; border-radius: 50%; border: 2px solid #000; }
+        .p-brand h1 { font-size: 24px; font-weight: 800; background: var(--gradient-premium); -webkit-background-clip: text; -webkit-text-fill-color: transparent; line-height: 1; }
+        .p-brand span { font-size: 12px; color: #71717a; font-weight: 600; }
+        .p-logout { color: #ed4956; padding: 10px; border-radius: 12px; background: rgba(237,73,86,0.1); }
+        .p-search-container { padding: 0 16px 24px; }
+        .p-search-box { background: #18181b; border-radius: 16px; display: flex; align-items: center; padding: 14px 20px; gap: 14px; border: 1px solid rgba(255,255,255,0.05); color: #71717a; }
+        .p-search-box input { background: transparent; border: none; color: white; flex: 1; outline: none; font-size: 15px; }
+        .p-section-title { font-size: 13px; font-weight: 800; color: #71717a; text-transform: uppercase; letter-spacing: 1px; padding: 0 16px 16px; }
+        .p-online-section { padding-bottom: 24px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .p-online-list { display: flex; gap: 20px; padding: 0 16px; overflow-x: auto; scrollbar-width: none; }
+        .p-online-card { display: flex; flex-direction: column; align-items: center; gap: 10px; flex-shrink: 0; cursor: pointer; }
+        .p-avatar-lg { width: 68px; height: 68px; position: relative; border-radius: 50%; padding: 3px; border: 2px solid #27272a; transition: transform 0.2s; }
+        .p-avatar-lg.glow { border-color: #00d2ff; box-shadow: 0 0 15px rgba(0,210,255,0.2); }
+        .p-avatar-lg img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+        .p-online-dot { position: absolute; bottom: 4px; right: 4px; width: 14px; height: 14px; border-radius: 50%; border: 3px solid #000; background: #4caf50; }
+        .p-online-card span { font-size: 12px; color: #a1a1aa; font-weight: 500; }
+        .p-chats-section { flex: 1; padding-top: 24px; display: flex; flex-direction: column; }
+        .p-chat-scroll { flex: 1; overflow-y: auto; }
+        .p-chat-item { display: flex; align-items: center; gap: 16px; padding: 16px; transition: background 0.2s; cursor: pointer; }
+        .p-avatar-md { position: relative; width: 60px; height: 60px; }
+        .p-avatar-md img { width: 100%; height: 100%; border-radius: 50%; }
+        .p-dot-mini { position: absolute; bottom: 2px; right: 2px; width: 14px; height: 14px; background: #4caf50; border: 3px solid #000; border-radius: 50%; }
+        .p-chat-info { flex: 1; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 16px; }
+        .p-chat-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .p-chat-top h3 { font-size: 16px; font-weight: 700; color: #f4f4f5; }
+        .p-chat-top span { font-size: 12px; color: #71717a; }
+        .p-chat-info p { font-size: 14px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+        .p-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .p-profile-modal { background: #18181b; width: 100%; max-width: 420px; border-radius: 32px; padding: 32px; border: 1px solid rgba(255,255,255,0.1); }
+        .p-modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; }
+        .p-modal-head h2 { font-size: 22px; font-weight: 800; }
+        .p-profile-edit { display: flex; flex-direction: column; align-items: center; gap: 24px; margin-bottom: 40px; }
+        .p-avatar-huge { position: relative; width: 130px; height: 130px; }
+        .p-avatar-huge img { width: 100%; height: 100%; border-radius: 50%; border: 3px solid #00d2ff; box-shadow: 0 0 30px rgba(0,210,255,0.2); }
+        .p-cam-btn { position: absolute; bottom: 0; right: 0; background: #00d2ff; padding: 12px; border-radius: 50%; cursor: pointer; color: #fff; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
+        .p-user-meta { text-align: center; }
+        .p-user-meta h3 { font-size: 24px; font-weight: 800; margin-bottom: 6px; }
+        .p-user-meta p { color: #71717a; font-size: 15px; }
+        .p-save-btn { width: 100%; background: #fff; color: #000; padding: 18px; border-radius: 20px; font-weight: 800; font-size: 16px; }
       `}</style>
     </motion.div>
   );
