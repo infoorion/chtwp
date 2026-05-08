@@ -17,15 +17,15 @@ const ChatList = () => {
   const fetchData = useCallback(async () => {
     if (!user?.id) return;
     try {
-      // 1. Get chats from local storage first (instant)
-      const localChats = getContacts(user.id);
-      setRecentChats(localChats);
+      // 1. Get from local first (Instant)
+      const local = getContacts(user.id);
+      console.log('[Inbox] Local contacts:', local.length);
+      setRecentChats(local);
       setLoading(false);
 
-      // 2. Try to sync with server to get latest lastMessage
+      // 2. Sync with server for message updates
       const serverChats = await apiFetch(`/conversations/${user.id}`);
       if (serverChats && serverChats.length > 0) {
-        // Update local contacts with server data if available
         serverChats.forEach(c => saveContact(user.id, c));
         setRecentChats(getContacts(user.id));
       }
@@ -44,16 +44,19 @@ const ChatList = () => {
       setOnlineUsers(users.filter(u => String(u.id) !== String(user.id)));
     });
 
-    socket.on('receive_message', (msg) => {
-      // Instant refresh when message arrives
-      fetchData();
-    });
+    socket.on('receive_message', fetchData);
 
     return () => {
       socket.off('presence');
       socket.off('receive_message');
     };
   }, [user, fetchData]);
+
+  const handleStartChat = (targetUser) => {
+    // CRITICAL: Save to local storage IMMEDIATELY when clicked
+    saveContact(user.id, targetUser);
+    navigate(`/chat/${targetUser.id}`);
+  };
 
   const handleUpdateAvatar = async (e) => {
     const file = e.target.files?.[0];
@@ -116,7 +119,7 @@ const ChatList = () => {
                 key={u.id}
                 initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
                 className="p-online-card"
-                onClick={() => navigate(`/chat/${u.id}`)}
+                onClick={() => handleStartChat(u)}
               >
                 <div className="p-avatar-lg glow">
                   <img src={u.avatar} alt="" />
@@ -139,7 +142,7 @@ const ChatList = () => {
             </div>
           ) : (
             recentChats.map((chat) => (
-              <div key={chat.id} className="p-chat-item" onClick={() => navigate(`/chat/${chat.id}`)}>
+              <div key={chat.id} className="p-chat-item" onClick={() => handleStartChat(chat)}>
                 <div className="p-avatar-md">
                   <img src={chat.avatar} alt="" />
                   {isOnline(chat.id) && <div className="p-dot-mini" />}
@@ -149,7 +152,7 @@ const ChatList = () => {
                     <h3>{chat.username}</h3>
                     <span>{chat.lastMessage ? new Date(chat.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                   </div>
-                  <p>{chat.lastMessage?.text || (chat.lastMessage?.type === 'audio' ? '🎵 Voice Note' : (chat.lastMessage?.type === 'image' ? '📸 Photo' : 'No messages yet'))}</p>
+                  <p>{chat.lastMessage?.text || (chat.lastMessage?.type === 'audio' ? '🎵 Voice Note' : 'No messages yet')}</p>
                 </div>
               </div>
             ))
@@ -168,10 +171,10 @@ const ChatList = () => {
               <div className="p-profile-edit">
                 <div className="p-avatar-huge">
                   <img src={user?.avatar} alt="Current Profile" />
-                  <label htmlFor="profile-upload-final-v3" className="p-cam-btn">
+                  <label htmlFor="profile-upload-v4" className="p-cam-btn">
                     <Camera size={26} />
                   </label>
-                  <input id="profile-upload-final-v3" type="file" accept="image/*" hidden onChange={handleUpdateAvatar} />
+                  <input id="profile-upload-v4" type="file" accept="image/*" hidden onChange={handleUpdateAvatar} />
                 </div>
                 <div className="p-user-meta">
                   <h3>{user?.username}</h3>
