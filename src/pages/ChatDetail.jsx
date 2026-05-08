@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { socket, apiFetch } from '../utils/socketClient';
-import { ChevronLeft, Info, Send, Image as ImageIcon, Smile, MoreHorizontal, X, Mic, Trash2, CornerUpLeft, Check, CheckCheck, Camera, Phone, Video } from 'lucide-react';
+import { ChevronLeft, Info, Send, Image as ImageIcon, Smile, MoreHorizontal, X, Mic, Trash2, CornerUpLeft, Check, CheckCheck, Camera, Phone, Video, Play, Pause, Trash } from 'lucide-react';
 
 const ChatDetail = () => {
   const { id } = useParams();
@@ -16,10 +16,11 @@ const ChatDetail = () => {
   const [replyTo, setReplyTo] = useState(null);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [voicePreview, setVoicePreview] = useState(null); // { blob, url, base64 }
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const scrollRef = useRef();
 
-  const emojis = ['😂','❤️','😍','🤣','😊','🙏','😭','😘','👍','✨','🔥','🤔','💀','🙌','✔️','👀','🎉','💙','✅','🌈'];
+  const emojis = ['😂','❤️','😍','😊','🙏','😭','😘','👍','✨','🔥','🤔','💀','🙌','✔️','👀','🎉','💙','✅','🌈','💯'];
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -77,8 +78,10 @@ const ChatDetail = () => {
     setNewMessage('');
     setReplyTo(null);
     setShowEmoji(false);
+    setVoicePreview(null);
   };
 
+  // Voice Recording
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -87,8 +90,11 @@ const ChatDetail = () => {
       recorder.ondataavailable = (e) => chunks.push(e.data);
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: 'audio/webm' });
+        const url = URL.createObjectURL(blob);
         const reader = new FileReader();
-        reader.onloadend = () => handleSend(reader.result, 'audio');
+        reader.onloadend = () => {
+          setVoicePreview({ url, base64: reader.result });
+        };
         reader.readAsDataURL(blob);
       };
       recorder.start();
@@ -149,8 +155,13 @@ const ChatDetail = () => {
                 </div>
               )}
               <div className="p-bubble-main">
-                {m.type === 'audio' ? <div className="p-voice">Voice Note 🎵</div> :
-                 m.type === 'image' ? <img src={m.media_url} className="p-media" alt="" /> : m.text}
+                {m.type === 'audio' ? (
+                  <div className="p-voice-bubble">
+                    <audio src={m.media_url} controls className="p-audio-player" />
+                  </div>
+                ) : m.type === 'image' ? (
+                  <img src={m.media_url} className="p-media" alt="" />
+                ) : m.text}
                 <div className="p-meta">
                   <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   <MessageTicks status={m.status} isSent={m.sender_id === String(user.id)} />
@@ -174,10 +185,22 @@ const ChatDetail = () => {
       </div>
 
       <div className="p-chat-footer">
+        {/* Emoji & Voice Preview Section */}
         <AnimatePresence>
           {showEmoji && (
             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} className="emoji-p">
               {emojis.map(e => <button key={e} onClick={() => setNewMessage(prev => prev + e)}>{e}</button>)}
+            </motion.div>
+          )}
+          {voicePreview && (
+            <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} className="p-voice-preview">
+              <div className="preview-controls">
+                <audio src={voicePreview.url} controls />
+                <div className="preview-btns">
+                  <button onClick={() => setVoicePreview(null)} className="p-cancel"><Trash size={20} /></button>
+                  <button onClick={() => handleSend(voicePreview.base64, 'audio')} className="p-send-voice"><Send size={20} /></button>
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -197,21 +220,34 @@ const ChatDetail = () => {
 
         <div className="p-input-line">
           <button className="p-icon" onClick={() => setShowEmoji(!showEmoji)}><Smile size={24} color={showEmoji ? '#00d2ff' : '#fff'} /></button>
+          
           <div className="p-input-box">
             <input 
-              placeholder={isRecording ? "Recording..." : "Message..."} 
+              placeholder={isRecording ? "Recording... (Hold to talk)" : "Message..."} 
               value={newMessage} 
               onChange={e => setNewMessage(e.target.value)} 
               onKeyPress={e => e.key === 'Enter' && handleSend(newMessage)}
               disabled={isRecording}
             />
-            <label className="p-icon"><Camera size={22} /><input type="file" hidden onChange={e => {
-              const r = new FileReader(); r.onload = () => handleSend(r.result, 'image'); r.readAsDataURL(e.target.files[0]);
-            }}/></label>
-            <button className="p-icon"><ImageIcon size={22} /></button>
+            {/* Fixed Media & Camera Buttons */}
+            <div className="p-input-extras">
+              <label className="p-icon-action">
+                <Camera size={22} />
+                <input type="file" accept="image/*" hidden onChange={e => {
+                  const r = new FileReader(); r.onload = () => handleSend(r.result, 'image'); r.readAsDataURL(e.target.files[0]);
+                }}/>
+              </label>
+              <label className="p-icon-action">
+                <ImageIcon size={22} />
+                <input type="file" accept="image/*" hidden onChange={e => {
+                  const r = new FileReader(); r.onload = () => handleSend(r.result, 'image'); r.readAsDataURL(e.target.files[0]);
+                }}/>
+              </label>
+            </div>
           </div>
+
           <div className="p-action-slot">
-            {newMessage.trim() ? (
+            {newMessage.trim() || voicePreview ? (
               <button onClick={() => handleSend(newMessage)} className="p-send"><Send size={24} /></button>
             ) : (
               <button 
@@ -227,43 +263,46 @@ const ChatDetail = () => {
       </div>
 
       <style>{`
-        .p-chat-wrapper { height: 100vh; display: flex; flex-direction: column; background: #09090b; }
-        .p-chat-header { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 12px; }
+        .p-chat-wrapper { height: 100vh; display: flex; flex-direction: column; background: #09090b; position: relative; }
+        .p-chat-header { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 12px; background: #09090b; z-index: 10; }
         .p-header-user { flex: 1; display: flex; align-items: center; gap: 12px; }
         .p-header-user img { width: 36px; height: 36px; border-radius: 50%; }
         .p-header-user h3 { font-size: 15px; font-weight: 700; color: #fff; }
         .p-header-user span { font-size: 11px; color: #4caf50; }
         .p-header-actions { display: flex; gap: 16px; color: #fff; }
-        .p-chat-body { flex: 1; overflow-y: auto; padding: 20px 16px; position: relative; z-index: 1; display: flex; flex-direction: column; gap: 12px; }
-        .p-chat-bg { position: absolute; inset: 0; background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.03) 1px, transparent 0); background-size: 24px 24px; z-index: -1; }
+        .p-chat-body { flex: 1; overflow-y: auto; padding: 20px 16px; position: relative; display: flex; flex-direction: column; gap: 12px; }
+        .p-chat-bg { position: absolute; inset: 0; background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.03) 1px, transparent 0); background-size: 24px 24px; z-index: -1; pointer-events: none; }
         .p-bubble-row { display: flex; width: 100%; }
         .p-bubble-row.me { justify-content: flex-end; }
-        .p-bubble-card { max-width: 80%; position: relative; }
+        .p-bubble-card { max-width: 85%; position: relative; }
         .p-bubble-main { padding: 10px 14px; border-radius: 18px; font-size: 15px; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         .me .p-bubble-main { background: linear-gradient(135deg, #00d2ff, #3a7bd5); border-bottom-right-radius: 4px; }
         .them .p-bubble-main { background: #18181b; border-bottom-left-radius: 4px; border: 1px solid rgba(255,255,255,0.05); }
         .p-media { width: 100%; max-width: 250px; border-radius: 12px; }
-        .p-voice { display: flex; align-items: center; gap: 8px; font-style: italic; opacity: 0.9; }
-        .p-quote { background: rgba(255,255,255,0.05); padding: 6px 10px; border-left: 3px solid #00d2ff; border-radius: 6px; margin-bottom: 4px; font-size: 12px; }
+        .p-audio-player { width: 220px; height: 36px; filter: invert(1); opacity: 0.8; }
         .p-meta { display: flex; justify-content: flex-end; align-items: center; gap: 4px; margin-top: 4px; font-size: 10px; opacity: 0.5; }
-        .p-menu { position: absolute; bottom: 110%; right: 0; background: #18181b; border-radius: 12px; padding: 6px; z-index: 100; border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; min-width: 120px; }
+        .p-menu { position: absolute; bottom: 110%; right: 0; background: #18181b; border-radius: 12px; padding: 6px; z-index: 100; border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; min-width: 120px; box-shadow: 0 8px 20px rgba(0,0,0,0.5); }
         .p-menu button { display: flex; align-items: center; gap: 10px; padding: 10px; color: #fff; font-size: 14px; }
-        .p-menu .del { color: #ff0055; }
         .p-chat-footer { background: #09090b; border-top: 1px solid rgba(255,255,255,0.05); padding-bottom: 24px; }
         .emoji-p { display: grid; grid-template-columns: repeat(8, 1fr); padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
         .emoji-p button { font-size: 24px; padding: 4px; }
-        .p-reply-bar { display: flex; align-items: center; padding: 10px 16px; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .p-reply-line { width: 4px; height: 30px; background: #00d2ff; border-radius: 2px; }
-        .p-reply-info span { font-size: 11px; font-weight: 800; color: #00d2ff; }
-        .p-reply-info p { font-size: 13px; opacity: 0.7; }
+        .p-voice-preview { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); background: #121212; }
+        .preview-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .preview-controls audio { height: 36px; flex: 1; filter: invert(1); }
+        .preview-btns { display: flex; gap: 12px; }
+        .p-cancel { color: #ed4956; }
+        .p-send-voice { color: #00d2ff; }
         .p-input-line { display: flex; align-items: center; padding: 12px; gap: 12px; }
         .p-input-box { flex: 1; background: #18181b; border-radius: 24px; display: flex; align-items: center; padding: 0 16px; border: 1px solid rgba(255,255,255,0.05); }
-        .p-input-box input { flex: 1; background: transparent; border: none; color: #fff; padding: 12px 0; outline: none; }
-        .p-icon { color: rgba(255,255,255,0.6); margin: 0 4px; cursor: pointer; }
+        .p-input-box input { flex: 1; background: transparent; border: none; color: #fff; padding: 12px 0; outline: none; font-size: 15px; }
+        .p-input-extras { display: flex; gap: 12px; margin-left: 8px; }
+        .p-icon-action { color: rgba(255,255,255,0.6); cursor: pointer; display: flex; align-items: center; transition: color 0.2s; }
+        .p-icon-action:hover { color: #00d2ff; }
+        .p-icon { color: rgba(255,255,255,0.6); cursor: pointer; }
         .p-action-slot { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
         .p-send { color: #00d2ff; }
         .p-mic { color: #fff; }
-        .p-mic.active { color: #ff0055; transform: scale(1.2); animation: p-pulse 1s infinite; }
+        .p-mic.active { color: #ff0055; animation: p-pulse 1s infinite; }
         @keyframes p-pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
       `}</style>
     </div>
