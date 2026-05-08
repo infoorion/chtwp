@@ -17,12 +17,44 @@ const io = new Server(server, {
   }
 });
 
-const DB_PATH = process.env.NODE_ENV === 'production' ? '/opt/render/project/src/db.json' : path.join(__dirname, 'db.json');
+// Production DB Path on Render with Persistent Disk
+// Important: If you didn't add a Disk on Render, chats will reset on every deploy!
+const DB_PATH = process.env.NODE_ENV === 'production' 
+  ? '/opt/render/project/src/db.json' 
+  : path.join(__dirname, 'db.json');
+
+console.log(`[System] Using Database at: ${DB_PATH}`);
+
 const initDB = () => { 
-  if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, JSON.stringify({ users: {}, messages: [] }, null, 2));
+  try {
+    const dir = path.dirname(DB_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(DB_PATH)) {
+      console.log('[System] Initializing new DB file...');
+      fs.writeFileSync(DB_PATH, JSON.stringify({ users: {}, messages: [] }, null, 2));
+    }
+  } catch (err) {
+    console.error('[System] DB Init Error:', err);
+  }
 };
-const getDB = () => { try { return JSON.parse(fs.readFileSync(DB_PATH)); } catch (e) { return { users: {}, messages: [] }; } };
-const saveDB = (data) => fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+
+const getDB = () => { 
+  try { 
+    return JSON.parse(fs.readFileSync(DB_PATH)); 
+  } catch (e) { 
+    console.error('[System] DB Read Error:', e);
+    return { users: {}, messages: [] }; 
+  } 
+};
+
+const saveDB = (data) => {
+  try {
+    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('[System] DB Write Error:', err);
+  }
+};
+
 initDB();
 
 // API
@@ -31,7 +63,7 @@ app.post('/api/login', (req, res) => {
   const db = getDB();
   const phoneStr = String(phone);
   if (!db.users[phoneStr]) {
-    db.users[phoneStr] = { id: phoneStr, phone: phoneStr, username, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`, joinedAt: new Date().toISOString() };
+    db.users[phoneStr] = { id: phoneStr, phone: phoneStr, username: username || phoneStr, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username || phoneStr}`, joinedAt: new Date().toISOString() };
     saveDB(db);
   }
   res.json(db.users[phoneStr]);
@@ -40,7 +72,8 @@ app.post('/api/login', (req, res) => {
 app.post('/api/update-profile', (req, res) => {
   const { userId, avatar } = req.body;
   const db = getDB();
-  if (db.users[userId]) { db.users[userId].avatar = avatar; saveDB(db); res.json(db.users[userId]); }
+  const uid = String(userId);
+  if (db.users[uid]) { db.users[uid].avatar = avatar; saveDB(db); res.json(db.users[uid]); }
   else { res.status(404).json({ error: 'User not found' }); }
 });
 
@@ -55,8 +88,6 @@ app.get('/api/conversations/:userId', (req, res) => {
   const { userId } = req.params;
   const uid = String(userId);
   const db = getDB();
-  
-  // Find all unique partners this user has ever messaged
   const chatPartners = new Set();
   db.messages.forEach(m => {
     const s = String(m.sender_id);
@@ -64,17 +95,16 @@ app.get('/api/conversations/:userId', (req, res) => {
     if (s === uid) chatPartners.add(r);
     else if (r === uid) chatPartners.add(s);
   });
-
   const conversations = Array.from(chatPartners).map(pid => {
     const partner = db.users[pid] || Object.values(db.users).find(u => String(u.id) === pid || String(u.phone) === pid);
     if (!partner) return null;
     const lastMsg = db.messages.filter(m => !m.is_deleted && ((String(m.sender_id) === uid && String(m.receiver_id) === pid) || (String(m.sender_id) === pid && String(m.receiver_id) === uid))).pop();
     return { ...partner, lastMessage: lastMsg };
   }).filter(Boolean);
-
   res.json(conversations);
 });
 
+// Serve Frontend
 if (process.env.NODE_ENV === 'production') {
   const buildPath = path.join(__dirname, '../dist');
   app.use(express.static(buildPath));
@@ -82,23 +112,16 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Socket
-const socketMap = new Map(); // socket.id -> user
+const socketMap = new Map();
 io.on('connection', (socket) => {
   socket.on('join', (user) => {
     if (!user || !user.id) return;
     const uid = String(user.id);
     socket.join(uid);
     socketMap.set(socket.id, { ...user, id: uid });
-    
-    // Deduplicate online users by ID
     const uniqueOnline = [];
     const seenIds = new Set();
-    socketMap.forEach(u => {
-      if (!seenIds.has(u.id)) {
-        seenIds.add(u.id);
-        uniqueOnline.push(u);
-      }
-    });
+    socketMap.forEach(u => { if (!seenIds.has(u.id)) { seenIds.add(u.id); uniqueOnline.push(u); } });
     io.emit('presence', uniqueOnline);
   });
 
@@ -123,15 +146,10 @@ io.on('connection', (socket) => {
     socketMap.delete(socket.id);
     const uniqueOnline = [];
     const seenIds = new Set();
-    socketMap.forEach(u => {
-      if (!seenIds.has(u.id)) {
-        seenIds.add(u.id);
-        uniqueOnline.push(u);
-      }
-    });
+    socketMap.forEach(u => { if (!seenIds.has(u.id)) { seenIds.add(u.id); uniqueOnline.push(u); } });
     io.emit('presence', uniqueOnline);
   });
 });
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => console.log(`Server on ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
