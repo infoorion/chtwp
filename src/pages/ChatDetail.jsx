@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
@@ -24,30 +24,68 @@ const ChatDetail = () => {
 
   const emojis = ['😂','❤️','😍','😊','🙏','😭','😘','👍','✨','🔥','🤔','💀','🙌','✔️','👀','🎉','💙','✅','🌈','💯'];
 
+  // Robust Backup Keys
+  const msgKey = useMemo(() => user?.id ? `sgram_v2_msgs_${user.id}_${id}` : null, [user?.id, id]);
+
+  const saveLocalBackup = (msgs) => {
+    if (msgKey) localStorage.setItem(msgKey, JSON.stringify(msgs));
+  };
+
+  const getLocalBackup = () => {
+    if (!msgKey) return [];
+    const raw = localStorage.getItem(msgKey);
+    return raw ? JSON.parse(raw) : [];
+  };
+
   useEffect(() => {
+    if (!user?.id) return;
+
     const fetchHistory = async () => {
       try {
-        // Fetch partner details to save to local contacts
+        // 1. Load backup immediately
+        const backup = getLocalBackup();
+        if (backup.length > 0) {
+          setMessages(backup);
+          setLoading(false);
+        }
+
+        // 2. Fetch partner details
         const info = await apiFetch(`/user/${id}`);
         setPartnerInfo(info);
         if (info.id) saveContact(user.id, info);
 
-        const data = await apiFetch(`/messages/${user.id}/${id}`);
-        setMessages(data);
+        // 3. Sync with server
+        const serverMsgs = await apiFetch(`/messages/${user.id}/${id}`);
+        if (serverMsgs && Array.isArray(serverMsgs)) {
+          // Merge logic: only update if server has data
+          if (serverMsgs.length > 0) {
+            setMessages(serverMsgs);
+            saveLocalBackup(serverMsgs);
+          }
+        }
         setLoading(false);
         socket.emit('mark_seen', { senderId: id, receiverId: user.id });
-      } catch (err) { console.error(err); }
+      } catch (err) { 
+        console.error('[ChatDetail] Fetch error:', err);
+        setLoading(false);
+      }
     };
     fetchHistory();
-  }, [id, user.id]);
+  }, [id, user?.id, msgKey]);
 
   useEffect(() => {
+    if (!user?.id) return;
+
     const onMsg = (msg) => {
       if ((String(msg.sender_id) === String(user.id) && String(msg.receiver_id) === String(id)) || 
           (String(msg.sender_id) === String(id) && String(msg.receiver_id) === String(user.id))) {
-        setMessages(prev => [...prev.filter(m => m.id !== msg.id), msg]);
         
-        // Update local inbox with the latest message
+        setMessages(prev => {
+          const updated = [...prev.filter(m => m.id !== msg.id), msg];
+          saveLocalBackup(updated);
+          return updated;
+        });
+        
         updateLastMessage(user.id, id, msg);
 
         if (String(msg.receiver_id) === String(user.id)) {
@@ -55,14 +93,27 @@ const ChatDetail = () => {
         }
       }
     };
-    const onStatus = ({ receiverId, status }) => {
-      setMessages(prev => prev.map(m => (m.receiver_id === id && m.sender_id === user.id) ? { ...m, status: 'seen' } : m));
-    };
+
     socket.on('receive_message', onMsg);
-    socket.on('status_update', onStatus);
-    socket.on('message_deleted', (mid) => setMessages(prev => prev.filter(m => m.id !== mid)));
-    return () => { socket.off('receive_message'); socket.off('status_update'); socket.off('message_deleted'); };
-  }, [id, user.id]);
+    socket.on('status_update', ({ receiverId, status }) => {
+      setMessages(prev => {
+        const updated = prev.map(m => (m.receiver_id === id && m.sender_id === user.id) ? { ...m, status: 'seen' } : m);
+        saveLocalBackup(updated);
+        return updated;
+      });
+    });
+    socket.on('message_deleted', (mid) => setMessages(prev => {
+      const updated = prev.filter(m => m.id !== mid);
+      saveLocalBackup(updated);
+      return updated;
+    }));
+
+    return () => {
+      socket.off('receive_message');
+      socket.off('status_update');
+      socket.off('message_deleted');
+    };
+  }, [id, user?.id, msgKey]);
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -76,11 +127,20 @@ const ChatDetail = () => {
       type,
       reply_to: replyTo ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender_name } : null,
       sender_name: user.username,
-      status: 'sent'
+      status: 'sent',
+      created_at: new Date().toISOString(),
+      id: Date.now()
     };
+    
     socket.emit('send_message', msg);
     
-    // Instant local update for the inbox
+    // Instant UI + Backup
+    setMessages(prev => {
+      const updated = [...prev, msg];
+      saveLocalBackup(updated);
+      return updated;
+    });
+
     if (partnerInfo) {
       saveContact(user.id, partnerInfo);
       updateLastMessage(user.id, id, msg);
@@ -271,18 +331,7 @@ const ChatDetail = () => {
         .p-header-user span { font-size: 11px; color: #4caf50; }
         .p-header-actions { display: flex; gap: 16px; color: #fff; }
         .p-chat-body { flex: 1; overflow-y: auto; padding: 20px 16px; position: relative; display: flex; flex-direction: column; gap: 12px; z-index: 1; }
-        
-        .p-chat-bg-img { 
-          position: absolute; 
-          inset: 0; 
-          background-image: url('https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=2070&auto=format&fit=crop');
-          background-size: cover;
-          background-position: center;
-          opacity: 0.15;
-          z-index: -1;
-          filter: grayscale(100%) contrast(120%);
-        }
-
+        .p-chat-bg-img { position: absolute; inset: 0; background-image: url('https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=2070&auto=format&fit=crop'); background-size: cover; background-position: center; opacity: 0.15; z-index: -1; filter: grayscale(100%) contrast(120%); }
         .p-bubble-row { display: flex; width: 100%; }
         .p-bubble-row.me { justify-content: flex-end; }
         .p-bubble-card { max-width: 85%; position: relative; }
