@@ -28,43 +28,58 @@ app.get('/api/user/:phone', (req, res) => res.json(getDB().users[req.params.phon
 app.post('/api/login', (req, res) => {
   const { phone, username } = req.body;
   const db = getDB();
-  if (!db.users[phone]) {
-    db.users[phone] = { id: String(phone), phone: String(phone), username, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`, joinedAt: new Date().toISOString() };
+  const phoneStr = String(phone);
+  if (!db.users[phoneStr]) {
+    db.users[phoneStr] = { id: phoneStr, phone: phoneStr, username, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`, joinedAt: new Date().toISOString() };
     saveDB(db);
   }
-  res.json(db.users[phone]);
+  res.json(db.users[phoneStr]);
 });
 
 app.post('/api/update-profile', (req, res) => {
   const { userId, avatar } = req.body;
   const db = getDB();
-  if (db.users[userId]) {
-    db.users[userId].avatar = avatar;
+  const uid = String(userId);
+  if (db.users[uid]) {
+    db.users[uid].avatar = avatar;
     saveDB(db);
-    res.json(db.users[userId]);
+    res.json(db.users[uid]);
   } else { res.status(404).json({ error: 'User not found' }); }
 });
 
 app.get('/api/messages/:userA/:userB', (req, res) => {
   const { userA, userB } = req.params;
   const db = getDB();
-  res.json(db.messages.filter(m => !m.is_deleted && ((String(m.sender_id) === String(userA) && String(m.receiver_id) === String(userB)) || (String(m.sender_id) === String(userB) && String(m.receiver_id) === String(userA)))));
+  const uA = String(userA);
+  const uB = String(userB);
+  res.json(db.messages.filter(m => !m.is_deleted && ((String(m.sender_id) === uA && String(m.receiver_id) === uB) || (String(m.sender_id) === uB && String(m.receiver_id) === uA))));
 });
 
 app.get('/api/conversations/:userId', (req, res) => {
   const { userId } = req.params;
+  const uid = String(userId);
   const db = getDB();
-  const ids = new Set();
+  const chatPartners = new Set();
+  
   db.messages.forEach(m => {
-    if (String(m.sender_id) === String(userId)) ids.add(String(m.receiver_id));
-    if (String(m.receiver_id) === String(userId)) ids.add(String(m.sender_id));
+    const s = String(m.sender_id);
+    const r = String(m.receiver_id);
+    if (s === uid) chatPartners.add(r);
+    if (r === uid) chatPartners.add(s);
   });
-  res.json(Array.from(ids).map(id => {
-    const contact = db.users[id];
-    if (!contact) return null;
-    const lastMsg = db.messages.filter(m => !m.is_deleted && ((String(m.sender_id) === String(userId) && String(m.receiver_id) === String(id)) || (String(m.sender_id) === String(id) && String(m.receiver_id) === String(userId)))).pop();
-    return { ...contact, lastMessage: lastMsg };
-  }).filter(Boolean));
+
+  const conversations = Array.from(chatPartners).map(pid => {
+    const partner = db.users[pid];
+    if (!partner) return null;
+    
+    const lastMsg = db.messages
+      .filter(m => !m.is_deleted && ((String(m.sender_id) === uid && String(m.receiver_id) === pid) || (String(m.sender_id) === pid && String(m.receiver_id) === uid)))
+      .pop();
+    
+    return { ...partner, lastMessage: lastMsg };
+  }).filter(Boolean);
+
+  res.json(conversations);
 });
 
 if (process.env.NODE_ENV === 'production') {
@@ -77,6 +92,7 @@ if (process.env.NODE_ENV === 'production') {
 const onlineUsers = new Map();
 io.on('connection', (socket) => {
   socket.on('join', (user) => {
+    if (!user || !user.id) return;
     socket.join(String(user.id));
     onlineUsers.set(socket.id, user);
     io.emit('presence', Array.from(onlineUsers.values()));
@@ -93,16 +109,18 @@ io.on('connection', (socket) => {
 
   socket.on('mark_seen', ({ senderId, receiverId }) => {
     const db = getDB();
+    const sId = String(senderId);
+    const rId = String(receiverId);
     let updated = false;
     db.messages.forEach(m => {
-      if (String(m.sender_id) === String(senderId) && String(m.receiver_id) === String(receiverId) && m.status !== 'seen') {
+      if (String(m.sender_id) === sId && String(m.receiver_id) === rId && m.status !== 'seen') {
         m.status = 'seen';
         updated = true;
       }
     });
     if (updated) {
       saveDB(db);
-      io.to(String(senderId)).emit('status_update', { receiverId, status: 'seen' });
+      io.to(sId).emit('status_update', { receiverId: rId, status: 'seen' });
     }
   });
 
