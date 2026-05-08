@@ -3,10 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { socket, apiFetch } from '../utils/socketClient';
+import { saveContact, updateLastMessage } from '../utils/contacts';
 import { ChevronLeft, Info, Send, Image as ImageIcon, Smile, MoreHorizontal, X, Mic, Trash2, CornerUpLeft, Check, CheckCheck, Camera, Phone, Video, Play, Pause, Trash } from 'lucide-react';
 
 const ChatDetail = () => {
-  const { id } = useParams();
+  const { id } = useParams(); // partner's ID (phone)
   const navigate = useNavigate();
   const { user } = useAuth();
   const [messages, setMessages] = useState([]);
@@ -18,6 +19,7 @@ const ChatDetail = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [voicePreview, setVoicePreview] = useState(null);
   const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [partnerInfo, setPartnerInfo] = useState(null);
   const scrollRef = useRef();
 
   const emojis = ['😂','❤️','😍','😊','🙏','😭','😘','👍','✨','🔥','🤔','💀','🙌','✔️','👀','🎉','💙','✅','🌈','💯'];
@@ -25,6 +27,11 @@ const ChatDetail = () => {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
+        // Fetch partner details to save to local contacts
+        const info = await apiFetch(`/user/${id}`);
+        setPartnerInfo(info);
+        if (info.id) saveContact(user.id, info);
+
         const data = await apiFetch(`/messages/${user.id}/${id}`);
         setMessages(data);
         setLoading(false);
@@ -39,6 +46,10 @@ const ChatDetail = () => {
       if ((String(msg.sender_id) === String(user.id) && String(msg.receiver_id) === String(id)) || 
           (String(msg.sender_id) === String(id) && String(msg.receiver_id) === String(user.id))) {
         setMessages(prev => [...prev.filter(m => m.id !== msg.id), msg]);
+        
+        // Update local inbox with the latest message
+        updateLastMessage(user.id, id, msg);
+
         if (String(msg.receiver_id) === String(user.id)) {
           socket.emit('mark_seen', { senderId: id, receiverId: user.id });
         }
@@ -68,6 +79,13 @@ const ChatDetail = () => {
       status: 'sent'
     };
     socket.emit('send_message', msg);
+    
+    // Instant local update for the inbox
+    if (partnerInfo) {
+      saveContact(user.id, partnerInfo);
+      updateLastMessage(user.id, id, msg);
+    }
+
     setNewMessage('');
     setReplyTo(null);
     setShowEmoji(false);
@@ -109,9 +127,9 @@ const ChatDetail = () => {
       <header className="p-chat-header">
         <button onClick={() => navigate('/chats')} className="p-back"><ChevronLeft size={28} /></button>
         <div className="p-header-user">
-          <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${id}`} alt="" />
+          <img src={partnerInfo?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${id}`} alt="" />
           <div>
-            <h3>{id}</h3>
+            <h3>{partnerInfo?.username || id}</h3>
             <span>Online</span>
           </div>
         </div>
@@ -122,7 +140,6 @@ const ChatDetail = () => {
       </header>
 
       <div className="p-chat-body" onClick={() => { setSelectedMessage(null); setShowEmoji(false); }}>
-        {/* Abstract Background Image */}
         <div className="p-chat-bg-img" />
         
         {messages.map((m) => (

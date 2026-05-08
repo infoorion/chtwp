@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Search, LogOut, MessageSquare, User, Camera, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { socket, apiFetch } from '../utils/socketClient';
+import { getContacts, saveContact } from '../utils/contacts';
 
 const ChatList = () => {
   const { user, logout, setUser } = useAuth();
@@ -13,33 +14,23 @@ const ChatList = () => {
   const [loading, setLoading] = useState(true);
   const [showProfile, setShowProfile] = useState(false);
 
-  // Load from LocalStorage for instant visibility on Live
-  const getCachedChats = () => {
-    const cached = localStorage.getItem(`sgram_chats_${user?.id}`);
-    return cached ? JSON.parse(cached) : [];
-  };
-
   const fetchData = useCallback(async () => {
     if (!user?.id) return;
     try {
-      const chats = await apiFetch(`/conversations/${user.id}`);
-      
-      // Merge server chats with local cache to ensure no one disappears
-      const cached = getCachedChats();
-      const combined = [...chats];
-      
-      cached.forEach(c => {
-        if (!combined.some(existing => String(existing.id) === String(c.id))) {
-          combined.push(c);
-        }
-      });
-
-      setRecentChats(combined);
-      localStorage.setItem(`sgram_chats_${user.id}`, JSON.stringify(combined));
+      // 1. Get chats from local storage first (instant)
+      const localChats = getContacts(user.id);
+      setRecentChats(localChats);
       setLoading(false);
+
+      // 2. Try to sync with server to get latest lastMessage
+      const serverChats = await apiFetch(`/conversations/${user.id}`);
+      if (serverChats && serverChats.length > 0) {
+        // Update local contacts with server data if available
+        serverChats.forEach(c => saveContact(user.id, c));
+        setRecentChats(getContacts(user.id));
+      }
     } catch (err) { 
-      console.error('[Inbox] Fetch error:', err);
-      setRecentChats(getCachedChats());
+      console.error('[Inbox] Sync error:', err);
       setLoading(false);
     }
   }, [user?.id]);
@@ -54,14 +45,8 @@ const ChatList = () => {
     });
 
     socket.on('receive_message', (msg) => {
-      // If we get a message from someone new, add them to cache immediately
-      const cached = getCachedChats();
-      if (!cached.some(c => String(c.id) === String(msg.sender_id))) {
-        // We don't have full user info here, so we refresh from server
-        fetchData();
-      } else {
-        fetchData();
-      }
+      // Instant refresh when message arrives
+      fetchData();
     });
 
     return () => {
@@ -164,7 +149,7 @@ const ChatList = () => {
                     <h3>{chat.username}</h3>
                     <span>{chat.lastMessage ? new Date(chat.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                   </div>
-                  <p>{chat.lastMessage?.text || (chat.lastMessage?.type === 'audio' ? '🎵 Voice Note' : 'Tap to open chat')}</p>
+                  <p>{chat.lastMessage?.text || (chat.lastMessage?.type === 'audio' ? '🎵 Voice Note' : (chat.lastMessage?.type === 'image' ? '📸 Photo' : 'No messages yet'))}</p>
                 </div>
               </div>
             ))
@@ -183,10 +168,10 @@ const ChatList = () => {
               <div className="p-profile-edit">
                 <div className="p-avatar-huge">
                   <img src={user?.avatar} alt="Current Profile" />
-                  <label htmlFor="profile-upload-final" className="p-cam-btn">
+                  <label htmlFor="profile-upload-final-v3" className="p-cam-btn">
                     <Camera size={26} />
                   </label>
-                  <input id="profile-upload-final" type="file" accept="image/*" hidden onChange={handleUpdateAvatar} />
+                  <input id="profile-upload-final-v3" type="file" accept="image/*" hidden onChange={handleUpdateAvatar} />
                 </div>
                 <div className="p-user-meta">
                   <h3>{user?.username}</h3>
