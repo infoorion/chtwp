@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { Search, LogOut, MessageSquare, User, Camera, X } from 'lucide-react';
@@ -13,67 +13,65 @@ const ChatList = () => {
   const [showProfile, setShowProfile] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    if (!user?.id) return;
     try {
+      console.log('[Inbox] Fetching conversations for:', user.id);
       const chats = await apiFetch(`/conversations/${user.id}`);
+      console.log('[Inbox] Received chats:', chats.length);
       setRecentChats(chats);
       setLoading(false);
-    } catch (err) { console.error('[API] Fetch error:', err); }
-  };
+    } catch (err) { 
+      console.error('[Inbox] Fetch error:', err);
+      setLoading(false);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
+    
+    // Initial fetch
     fetchData();
+    
+    // Join socket room
     socket.emit('join', user);
     
+    // Listeners
     socket.on('presence', (users) => {
       const others = users.filter(u => String(u.id) !== String(user.id));
       setOnlineUsers(others);
     });
 
-    socket.on('receive_message', fetchData);
+    socket.on('receive_message', (msg) => {
+      console.log('[Inbox] New message received, refreshing list...');
+      fetchData();
+    });
 
+    // Cleanup
     return () => {
       socket.off('presence');
       socket.off('receive_message');
     };
-  }, [user]);
+  }, [user, fetchData]);
 
   const handleUpdateAvatar = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
-    console.log('[Profile] File selected:', file.name);
-    
     const reader = new FileReader();
-    reader.onloadstart = () => console.log('[Profile] Reading file...');
     reader.onloadend = async () => {
-      const base64 = reader.result;
-      console.log('[Profile] File read complete. Uploading to server...');
-      
       try {
-        const response = await apiFetch('/update-profile', {
+        const data = await apiFetch('/update-profile', {
           method: 'POST',
-          body: JSON.stringify({ userId: String(user.id), avatar: base64 })
+          body: JSON.stringify({ userId: String(user.id), avatar: reader.result })
         });
-        
-        if (response && response.id) {
-          console.log('[Profile] Update success!');
-          setUser(response);
-          localStorage.setItem('sgram_user', JSON.stringify(response));
+        if (data.id) {
+          setUser(data);
+          localStorage.setItem('sgram_user', JSON.stringify(data));
           setShowProfile(false);
-          // Force a small delay then refresh UI data
-          setTimeout(fetchData, 500);
-        } else {
-          console.error('[Profile] Server returned error:', response);
-          alert('Error: ' + (response?.error || 'Unknown error'));
+          fetchData();
         }
-      } catch (err) {
-        console.error('[Profile] Network error:', err);
-        alert('Could not connect to server to update photo.');
-      }
+      } catch (err) { alert('Failed to update photo'); }
     };
-    reader.onerror = (err) => console.error('[Profile] FileReader error:', err);
     reader.readAsDataURL(file);
   };
 
@@ -133,7 +131,9 @@ const ChatList = () => {
       <div className="p-chats-section">
         <h3 className="p-section-title">Recent Chats</h3>
         <div className="p-chat-scroll">
-          {recentChats.length === 0 && !loading ? (
+          {loading ? (
+            <div className="p-loading">Loading chats...</div>
+          ) : recentChats.length === 0 ? (
             <div className="p-empty-chats">
               <MessageSquare size={48} opacity={0.1} />
               <p>Your inbox is empty</p>
@@ -150,7 +150,7 @@ const ChatList = () => {
                     <h3>{chat.username}</h3>
                     <span>{chat.lastMessage ? new Date(chat.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                   </div>
-                  <p>{chat.lastMessage?.text || 'Sent a media file'}</p>
+                  <p>{chat.lastMessage?.text || (chat.lastMessage?.type === 'audio' ? '🎵 Voice Note' : 'Sent a media file')}</p>
                 </div>
               </div>
             ))
@@ -158,7 +158,6 @@ const ChatList = () => {
         </div>
       </div>
 
-      {/* Profile Modal */}
       <AnimatePresence>
         {showProfile && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-modal-overlay">
@@ -170,17 +169,10 @@ const ChatList = () => {
               <div className="p-profile-edit">
                 <div className="p-avatar-huge">
                   <img src={user?.avatar} alt="Current Profile" />
-                  {/* Fixed Label/Input Connection */}
-                  <label htmlFor="profile-upload" className="p-cam-btn">
+                  <label htmlFor="profile-upload-v2" className="p-cam-btn">
                     <Camera size={26} />
                   </label>
-                  <input 
-                    id="profile-upload"
-                    type="file" 
-                    accept="image/*" 
-                    hidden 
-                    onChange={handleUpdateAvatar} 
-                  />
+                  <input id="profile-upload-v2" type="file" accept="image/*" hidden onChange={handleUpdateAvatar} />
                 </div>
                 <div className="p-user-meta">
                   <h3>{user?.username}</h3>
@@ -225,6 +217,8 @@ const ChatList = () => {
         .p-chat-top h3 { font-size: 16px; font-weight: 700; color: #f4f4f5; }
         .p-chat-top span { font-size: 12px; color: #71717a; }
         .p-chat-info p { font-size: 14px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+        .p-loading { text-align: center; color: #71717a; padding: 20px; font-size: 14px; }
+        .p-empty-chats { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #3f3f46; text-align: center; gap: 16px; padding-top: 40px; }
         .p-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; }
         .p-profile-modal { background: #18181b; width: 100%; max-width: 420px; border-radius: 32px; padding: 32px; border: 1px solid rgba(255,255,255,0.1); }
         .p-modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; }
