@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { socket, apiFetch } from '../utils/socketClient';
-import { ChevronLeft, Info, Send, Image as ImageIcon, Smile, MoreHorizontal, X, Search, Mic, Trash2, CornerUpLeft, Play, Pause } from 'lucide-react';
+import { ChevronLeft, Info, Send, Image as ImageIcon, Smile, MoreHorizontal, X, Mic, Trash2, CornerUpLeft, Check, CheckCheck } from 'lucide-react';
 
 const ChatDetail = () => {
   const { id } = useParams();
@@ -12,11 +12,9 @@ const ChatDetail = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
-  const [showGifs, setShowGifs] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [mediaRecorder, setMediaRecorder] = useState(null);
   const [selectedMessage, setSelectedMessage] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
   const scrollRef = useRef();
 
   // Fetch History
@@ -26,229 +24,180 @@ const ChatDetail = () => {
         const data = await apiFetch(`/messages/${user.id}/${id}`);
         setMessages(data);
         setLoading(false);
-      } catch (err) {
-        console.error('Error fetching history:', err);
-      }
+        // Mark all as seen
+        socket.emit('mark_seen', { senderId: id, receiverId: user.id });
+      } catch (err) { console.error(err); }
     };
     fetchHistory();
   }, [id, user.id]);
 
-  // Real-time Listeners
+  // Socket
   useEffect(() => {
-    socket.on('receive_message', (msg) => {
+    const onMsg = (msg) => {
       if ((String(msg.sender_id) === String(user.id) && String(msg.receiver_id) === String(id)) || 
           (String(msg.sender_id) === String(id) && String(msg.receiver_id) === String(user.id))) {
         setMessages(prev => [...prev.filter(m => m.id !== msg.id), msg]);
+        if (String(msg.receiver_id) === String(user.id)) {
+          socket.emit('mark_seen', { senderId: id, receiverId: user.id });
+        }
       }
-    });
+    };
 
-    socket.on('message_deleted', (messageId) => {
-      setMessages(prev => prev.filter(m => m.id !== messageId));
-    });
+    const onStatus = ({ receiverId, status }) => {
+      if (String(receiverId) === String(user.id)) {
+        setMessages(prev => prev.map(m => m.receiver_id === id ? { ...m, status: 'seen' } : m));
+      }
+    };
+
+    socket.on('receive_message', onMsg);
+    socket.on('status_update', onStatus);
+    socket.on('message_deleted', (mid) => setMessages(prev => prev.filter(m => m.id !== mid)));
 
     return () => {
       socket.off('receive_message');
+      socket.off('status_update');
       socket.off('message_deleted');
     };
   }, [id, user.id]);
 
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  const handleSendMessage = (content, type = 'text') => {
+  const handleSend = (content, type = 'text') => {
     if (type === 'text' && !content.trim()) return;
-
-    const msgData = {
+    const msg = {
       sender_id: String(user.id),
       receiver_id: String(id),
       text: type === 'text' ? content : '',
       media_url: type !== 'text' ? content : null,
-      type: type,
+      type,
       reply_to: replyTo ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender_name } : null,
-      sender_name: user.username,
-      sender_avatar: user.avatar
+      sender_name: user.username
     };
-
-    socket.emit('send_message', msgData);
+    socket.emit('send_message', msg);
     setNewMessage('');
     setReplyTo(null);
-    setShowGifs(false);
   };
 
-  const handleUnsend = (messageId) => {
-    socket.emit('delete_message', { messageId, userId: user.id });
-    setSelectedMessage(null);
-  };
-
-  // Voice Recording
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      const chunks = [];
-
-      recorder.ondataavailable = (e) => chunks.push(e.data);
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/ogg; codecs=opus' });
-        const reader = new FileReader();
-        reader.onloadend = () => handleSendMessage(reader.result, 'audio');
-        reader.readAsDataURL(blob);
-      };
-
-      recorder.start();
-      setMediaRecorder(recorder);
-      setIsRecording(true);
-    } catch (err) {
-      alert('Microphone access denied');
-    }
-  };
-
-  const stopRecording = () => {
-    mediaRecorder?.stop();
-    setIsRecording(false);
+  const MessageTicks = ({ status, isSent }) => {
+    if (!isSent) return null;
+    if (status === 'seen') return <CheckCheck size={14} color="#40c4ff" />;
+    return <CheckCheck size={14} color="#8e8e8e" />;
   };
 
   return (
-    <div className="chat-detail-screen">
-      <header className="chat-header">
-        <button onClick={() => navigate('/chats')} className="icon-btn"><ChevronLeft size={24} /></button>
-        <div className="header-user">
-          <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${id}`} alt="User" />
-          <div className="user-info">
+    <div className="chat-screen-v2">
+      <header className="chat-header-v2">
+        <button onClick={() => navigate('/chats')}><ChevronLeft size={28} /></button>
+        <div className="header-info">
+          <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${id}`} alt="" />
+          <div>
             <h3>{id}</h3>
-            <span className="online-tag">Online</span>
+            <span>Active now</span>
           </div>
         </div>
       </header>
 
-      <div className="messages-container" onClick={() => setSelectedMessage(null)}>
-        {loading ? (
-          <div className="loading-chat">Loading...</div>
-        ) : (
-          <div className="messages-list">
-            {messages.map((msg) => (
-              <motion.div 
-                key={msg.id}
-                layout
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className={`message-wrapper ${msg.sender_id === String(user.id) ? 'sent' : 'received'}`}
-                onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); }}
-                onClick={(e) => { e.stopPropagation(); setSelectedMessage(msg === selectedMessage ? null : msg); }}
-              >
-                {msg.reply_to && (
-                  <div className="reply-quote">
-                    <span className="reply-user">{msg.reply_to.sender}</span>
-                    <p>{msg.reply_to.text || 'Media'}</p>
-                  </div>
-                )}
-                
-                <div className="bubble-with-actions">
-                  <div className="message-bubble">
-                    {msg.type === 'audio' ? (
-                      <div className="audio-player">
-                        <Play size={16} />
-                        <div className="audio-wave" />
-                        <span>Voice</span>
-                      </div>
-                    ) : (msg.type === 'image' || msg.type === 'gif') ? (
-                      <img src={msg.media_url} className="msg-media" alt="media" />
-                    ) : msg.text}
-                  </div>
-                  
-                  <AnimatePresence>
-                    {selectedMessage?.id === msg.id && (
-                      <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="bubble-menu">
-                        <button onClick={() => setReplyTo(msg)}><CornerUpLeft size={16}/></button>
-                        {msg.sender_id === String(user.id) && (
-                          <button onClick={() => handleUnsend(msg.id)} className="unsend-btn"><Trash2 size={16}/></button>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+      <div className="chat-body" onClick={() => setSelectedMessage(null)}>
+        {messages.map((m) => (
+          <div key={m.id} className={`msg-row ${m.sender_id === String(user.id) ? 'me' : 'them'}`}>
+            <motion.div 
+              whileTap={{ scale: 0.98 }}
+              onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(m); }}
+              className="msg-content-wrapper"
+            >
+              {m.reply_to && (
+                <div className="msg-reply-box">
+                  <b>{m.reply_to.sender}</b>
+                  <p>{m.reply_to.text || 'Media'}</p>
                 </div>
-              </motion.div>
-            ))}
-            <div ref={scrollRef} />
+              )}
+              <div className="msg-bubble-v2">
+                {m.type === 'image' ? <img src={m.media_url} className="msg-img" /> : m.text}
+                <div className="msg-meta">
+                  <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  <MessageTicks status={m.status} isSent={m.sender_id === String(user.id)} />
+                </div>
+              </div>
+
+              <AnimatePresence>
+                {selectedMessage?.id === m.id && (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="msg-actions-popup">
+                    <button onClick={() => setReplyTo(m)}><CornerUpLeft size={18} /> Reply</button>
+                    {m.sender_id === String(user.id) && (
+                      <button onClick={() => socket.emit('delete_message', { messageId: m.id, userId: user.id })} className="red"><Trash2 size={18} /> Unsend</button>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
           </div>
-        )}
+        ))}
+        <div ref={scrollRef} />
       </div>
 
-      <div className="input-area-wrapper">
+      <div className="input-container-v2">
         <AnimatePresence>
           {replyTo && (
-            <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="reply-preview">
-              <div className="reply-content">
+            <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} className="reply-bar">
+              <div className="reply-bar-content">
                 <span>Replying to {replyTo.sender_name}</span>
                 <p>{replyTo.text || 'Media'}</p>
               </div>
-              <button onClick={() => setReplyTo(null)}><X size={16}/></button>
+              <button onClick={() => setReplyTo(null)}><X size={20} /></button>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <form className="message-input-area" onSubmit={(e) => { e.preventDefault(); handleSendMessage(newMessage); }}>
-          <button type="button" className="icon-btn" onClick={() => setShowGifs(!showGifs)}><Smile size={24} /></button>
-          
-          <div className="input-wrapper">
+        <div className="input-row-v2">
+          <button className="icon-btn-v2"><Smile size={24} /></button>
+          <div className="input-field-v2">
             <input 
-              type="text" 
-              placeholder={isRecording ? 'Recording...' : 'Message...'} 
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              disabled={isRecording}
+              placeholder="Message..." 
+              value={newMessage} 
+              onChange={e => setNewMessage(e.target.value)} 
+              onKeyPress={e => e.key === 'Enter' && handleSend(newMessage)}
             />
+            <label><ImageIcon size={20} /><input type="file" hidden onChange={e => {
+              const r = new FileReader(); r.onload = () => handleSend(r.result, 'image'); r.readAsDataURL(e.target.files[0]);
+            }}/></label>
           </div>
-
           {newMessage.trim() ? (
-            <button type="submit" className="send-btn">Send</button>
+            <button onClick={() => handleSend(newMessage)} className="send-btn-v2"><Send size={24} /></button>
           ) : (
-            <button 
-              type="button" 
-              className={`mic-btn ${isRecording ? 'recording' : ''}`}
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onTouchStart={startRecording}
-              onTouchEnd={stopRecording}
-            >
-              <Mic size={24} />
-            </button>
+            <button className="mic-btn-v2"><Mic size={24} /></button>
           )}
-        </form>
+        </div>
       </div>
 
       <style>{`
-        .chat-detail-screen { height: 100vh; display: flex; flex-direction: column; background: #000; color: white; max-width: 500px; margin: 0 auto; position: relative; }
-        .chat-header { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid #262626; gap: 12px; }
-        .header-user { flex: 1; display: flex; align-items: center; gap: 12px; }
-        .header-user img { width: 36px; height: 36px; border-radius: 50%; }
-        .messages-container { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; }
-        .message-wrapper { margin-bottom: 8px; display: flex; flex-direction: column; }
-        .message-wrapper.sent { align-items: flex-end; }
-        .message-wrapper.received { align-items: flex-start; }
-        .bubble-with-actions { display: flex; align-items: center; gap: 8px; }
-        .sent .bubble-with-actions { flex-direction: row-reverse; }
-        .message-bubble { padding: 10px 16px; border-radius: 20px; font-size: 14px; background: #262626; max-width: 280px; }
-        .sent .message-bubble { background: var(--accent); border-bottom-right-radius: 4px; }
-        .received .message-bubble { border-bottom-left-radius: 4px; }
-        .reply-quote { background: #1a1a1a; padding: 6px 12px; border-left: 3px solid var(--accent); border-radius: 8px; margin-bottom: 4px; font-size: 12px; opacity: 0.8; max-width: 200px; }
-        .reply-user { font-weight: 700; color: var(--accent); display: block; }
-        .bubble-menu { background: #1a1a1a; border-radius: 20px; display: flex; padding: 4px 8px; gap: 8px; border: 1px solid #262626; }
-        .bubble-menu button { color: #8e8e8e; padding: 4px; }
-        .unsend-btn { color: #ed4956 !important; }
-        .msg-media { width: 100%; max-width: 200px; border-radius: 12px; }
-        .reply-preview { background: #121212; padding: 8px 16px; border-left: 4px solid var(--accent); display: flex; justify-content: space-between; align-items: center; }
-        .reply-content span { font-size: 11px; font-weight: 700; color: var(--accent); }
-        .reply-content p { font-size: 13px; color: #8e8e8e; }
-        .input-area-wrapper { background: #000; border-top: 1px solid #262626; }
-        .message-input-area { padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
-        .input-wrapper { flex: 1; background: #121212; border-radius: 24px; padding: 0 16px; border: 1px solid #262626; }
-        .input-wrapper input { background: transparent; border: none; color: white; padding: 10px 0; width: 100%; outline: none; }
-        .mic-btn { color: white; padding: 4px; transition: all 0.2s; }
-        .mic-btn.recording { color: #ed4956; transform: scale(1.3); }
-        .audio-player { display: flex; align-items: center; gap: 8px; }
-        .audio-wave { flex: 1; height: 2px; background: rgba(255,255,255,0.3); border-radius: 1px; width: 60px; }
+        .chat-screen-v2 { height: 100vh; display: flex; flex-direction: column; background: #000; color: white; max-width: 500px; margin: 0 auto; overflow: hidden; }
+        .chat-header-v2 { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid #262626; gap: 16px; background: #000; }
+        .header-info { display: flex; align-items: center; gap: 12px; }
+        .header-info img { width: 36px; height: 36px; border-radius: 50%; }
+        .header-info h3 { font-size: 15px; font-weight: 700; }
+        .header-info span { font-size: 11px; color: #4caf50; }
+        .chat-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .msg-row { display: flex; flex-direction: column; width: 100%; }
+        .msg-row.me { align-items: flex-end; }
+        .msg-row.them { align-items: flex-start; }
+        .msg-content-wrapper { position: relative; max-width: 80%; }
+        .msg-bubble-v2 { background: #262626; padding: 8px 12px; border-radius: 18px; font-size: 14px; position: relative; }
+        .me .msg-bubble-v2 { background: var(--accent); border-bottom-right-radius: 4px; }
+        .them .msg-bubble-v2 { border-bottom-left-radius: 4px; }
+        .msg-reply-box { background: rgba(255,255,255,0.1); padding: 6px 12px; border-left: 3px solid #fff; border-radius: 8px; margin-bottom: 4px; font-size: 12px; }
+        .msg-meta { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 4px; font-size: 10px; opacity: 0.6; }
+        .msg-img { width: 100%; border-radius: 12px; }
+        .msg-actions-popup { position: absolute; bottom: 100%; right: 0; background: #1a1a1a; border: 1px solid #262626; border-radius: 12px; padding: 8px; z-index: 100; display: flex; flex-direction: column; gap: 8px; min-width: 120px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        .msg-actions-popup button { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #fff; width: 100%; padding: 6px; }
+        .msg-actions-popup button.red { color: #ed4956; }
+        .input-container-v2 { background: #000; border-top: 1px solid #262626; padding-bottom: 20px; }
+        .input-row-v2 { display: flex; align-items: center; padding: 12px 16px; gap: 12px; }
+        .input-field-v2 { flex: 1; background: #121212; border: 1px solid #262626; border-radius: 24px; display: flex; align-items: center; padding: 0 16px; }
+        .input-field-v2 input { flex: 1; background: transparent; border: none; color: white; padding: 12px 0; font-size: 14px; outline: none; }
+        .send-btn-v2 { color: var(--accent); }
+        .reply-bar { background: #121212; padding: 8px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #262626; }
+        .reply-bar-content { font-size: 12px; border-left: 3px solid var(--accent); padding-left: 10px; }
+        .reply-bar-content span { font-weight: 700; color: var(--accent); }
       `}</style>
     </div>
   );
