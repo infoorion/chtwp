@@ -17,9 +17,8 @@ const io = new Server(server, {
   }
 });
 
-// Persistence Setup
 const DB_PATH = process.env.NODE_ENV === 'production' 
-  ? '/opt/render/project/src/db.json' // Path for Render persistent disk
+  ? '/opt/render/project/src/db.json' 
   : path.join(__dirname, 'db.json');
 
 const initDB = () => {
@@ -44,13 +43,7 @@ app.post('/api/login', (req, res) => {
   const db = getDB();
   if (!db.users[phone]) {
     if (!username) return res.status(400).json({ error: 'Username required' });
-    db.users[phone] = {
-      id: String(phone),
-      phone: String(phone),
-      username,
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`,
-      joinedAt: new Date().toISOString()
-    };
+    db.users[phone] = { id: String(phone), phone: String(phone), username, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`, joinedAt: new Date().toISOString() };
     saveDB(db);
   }
   res.json(db.users[phone]);
@@ -60,8 +53,10 @@ app.get('/api/messages/:userA/:userB', (req, res) => {
   const { userA, userB } = req.params;
   const db = getDB();
   const thread = db.messages.filter(m => 
-    (String(m.sender_id) === String(userA) && String(m.receiver_id) === String(userB)) || 
-    (String(m.sender_id) === String(userB) && String(m.receiver_id) === String(userA))
+    !m.is_deleted && (
+      (String(m.sender_id) === String(userA) && String(m.receiver_id) === String(userB)) || 
+      (String(m.sender_id) === String(userB) && String(m.receiver_id) === String(userA))
+    )
   );
   res.json(thread);
 });
@@ -77,22 +72,17 @@ app.get('/api/conversations/:userId', (req, res) => {
   const conversations = Array.from(chattedWithIds).map(id => {
     const contact = db.users[id];
     if (!contact) return null;
-    const lastMsg = db.messages.filter(m => 
-      (String(m.sender_id) === String(userId) && String(m.receiver_id) === String(id)) || 
-      (String(m.sender_id) === String(id) && String(m.receiver_id) === String(userId))
-    ).pop();
+    const lastMsg = db.messages.filter(m => !m.is_deleted && ((String(m.sender_id) === String(userId) && String(m.receiver_id) === String(id)) || (String(m.sender_id) === String(id) && String(m.receiver_id) === String(userId)))).pop();
     return { ...contact, lastMessage: lastMsg };
   }).filter(c => c !== null);
   res.json(conversations);
 });
 
-// --- PRODUCTION: Serve Frontend ---
+// Serve Frontend
 if (process.env.NODE_ENV === 'production') {
   const buildPath = path.join(__dirname, '../dist');
   app.use(express.static(buildPath));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(buildPath, 'index.html'));
-  });
+  app.get('*', (req, res) => res.sendFile(path.join(buildPath, 'index.html')));
 }
 
 // Socket.io
@@ -105,21 +95,30 @@ io.on('connection', (socket) => {
     io.emit('presence', Array.from(onlineUsers.values()));
   });
 
-  socket.on('get_presence', () => {
-    socket.emit('presence', Array.from(onlineUsers.values()));
-  });
-
   socket.on('send_message', (msg) => {
     const db = getDB();
     const newMsg = {
       ...msg,
       id: Date.now(),
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      is_deleted: false,
+      reply_to: msg.reply_to || null // Message ID being replied to
     };
     db.messages.push(newMsg);
     saveDB(db);
     io.to(String(newMsg.receiver_id)).emit('receive_message', newMsg);
     io.to(String(newMsg.sender_id)).emit('receive_message', newMsg);
+  });
+
+  socket.on('delete_message', ({ messageId, userId }) => {
+    const db = getDB();
+    const msg = db.messages.find(m => m.id === messageId);
+    if (msg && String(msg.sender_id) === String(userId)) {
+      msg.is_deleted = true;
+      saveDB(db);
+      io.to(String(msg.receiver_id)).emit('message_deleted', messageId);
+      io.to(String(msg.sender_id)).emit('message_deleted', messageId);
+    }
   });
 
   socket.on('disconnect', () => {
