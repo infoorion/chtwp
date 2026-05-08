@@ -1,0 +1,91 @@
+{
+  "users": {
+    "9696969696": {
+      "id": "9696969696",
+      "phone": "9696969696",
+      "username": "op11",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=op11",
+      "joinedAt": "2026-05-08T07:17:47.163Z"
+    },
+    "8885858874": {
+      "id": "8885858874",
+      "phone": "8885858874",
+      "username": "op22",
+      "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=op22",
+      "joinedAt": "2026-05-08T07:18:22.736Z"
+    }
+  },
+  "messages": [
+    {
+      "sender_id": "8888888888",
+      "receiver_id": "4474747777",
+      "text": "hi",
+      "sender_name": "popoli",
+      "sender_avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=popoli",
+      "id": 1778223744673,
+      "created_at": "2026-05-08T07:02:24.673Z"
+    },
+    {
+      "sender_id": "4474747777",
+      "receiver_id": "8888888888",
+      "text": "hello",
+      "sender_name": "rohino",
+      "sender_avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=rohino",
+      "id": 1778223754439,
+      "created_at": "2026-05-08T07:02:34.439Z"
+    },
+    {
+      "sender_id": "4474747777",
+      "receiver_id": "8888888888",
+      "text": "hello",
+      "sender_name": "rohino",
+      "sender_avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=rohino",
+      "id": 1778223770690,
+      "created_at": "2026-05-08T07:02:50.690Z"
+    },
+    {
+      "sender_id": "9696969696",
+      "receiver_id": "8885858874",
+      "text": "hi",
+      "media_url": null,
+      "type": "text",
+      "sender_name": "op11",
+      "sender_avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=op11",
+      "id": 1778224714434,
+      "created_at": "2026-05-08T07:18:34.434Z"
+    },
+    {
+      "sender_id": "8885858874",
+      "receiver_id": "9696969696",
+      "text": "hello",
+      "media_url": null,
+      "type": "text",
+      "sender_name": "op22",
+      "sender_avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=op22",
+      "id": 1778224728168,
+      "created_at": "2026-05-08T07:18:48.168Z"
+    },
+    {
+      "sender_id": "9696969696",
+      "receiver_id": "8885858874",
+      "text": "hi1",
+      "media_url": null,
+      "type": "text",
+      "sender_name": "op11",
+      "sender_avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=op11",
+      "id": 1778224738569,
+      "created_at": "2026-05-08T07:18:58.569Z"
+    },
+    {
+      "sender_id": "9696969696",
+      "receiver_id": "8885858874",
+      "text": "heloo12",
+      "media_url": null,
+      "type": "text",
+      "sender_name": "op11",
+      "sender_avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=op11",
+      "id": 1778224880336,
+      "created_at": "2026-05-08T07:21:20.336Z"
+    }
+  ]
+}
