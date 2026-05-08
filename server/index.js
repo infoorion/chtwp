@@ -19,54 +19,19 @@ const io = new Server(server, {
 
 const DB_PATH = process.env.NODE_ENV === 'production' ? '/opt/render/project/src/db.json' : path.join(__dirname, 'db.json');
 const initDB = () => { 
-  if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, JSON.stringify({ users: {}, messages: [] }, null, 2));
-  } else {
-    // Basic integrity check
-    try {
-      const data = JSON.parse(fs.readFileSync(DB_PATH));
-      if (!data.messages) data.messages = [];
-      if (!data.users) data.users = {};
-      fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    } catch (e) {
-      fs.writeFileSync(DB_PATH, JSON.stringify({ users: {}, messages: [] }, null, 2));
-    }
-  }
+  if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, JSON.stringify({ users: {}, messages: [] }, null, 2));
 };
-
-const getDB = () => {
-  try {
-    return JSON.parse(fs.readFileSync(DB_PATH));
-  } catch (e) {
-    return { users: {}, messages: [] };
-  }
-};
-
-const saveDB = (data) => {
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.error('DB Save Error:', e);
-  }
-};
-
+const getDB = () => { try { return JSON.parse(fs.readFileSync(DB_PATH)); } catch (e) { return { users: {}, messages: [] }; } };
+const saveDB = (data) => fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 initDB();
 
 // API
-app.get('/api/user/:phone', (req, res) => res.json(getDB().users[req.params.phone] || {}));
-
 app.post('/api/login', (req, res) => {
   const { phone, username } = req.body;
   const db = getDB();
   const phoneStr = String(phone);
   if (!db.users[phoneStr]) {
-    db.users[phoneStr] = { 
-      id: phoneStr, 
-      phone: phoneStr, 
-      username: username || phoneStr, 
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username || phoneStr}`, 
-      joinedAt: new Date().toISOString() 
-    };
+    db.users[phoneStr] = { id: phoneStr, phone: phoneStr, username, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`, joinedAt: new Date().toISOString() };
     saveDB(db);
   }
   res.json(db.users[phoneStr]);
@@ -75,26 +40,15 @@ app.post('/api/login', (req, res) => {
 app.post('/api/update-profile', (req, res) => {
   const { userId, avatar } = req.body;
   const db = getDB();
-  const uid = String(userId);
-  if (db.users[uid]) {
-    db.users[uid].avatar = avatar;
-    saveDB(db);
-    res.json(db.users[uid]);
-  } else { res.status(404).json({ error: 'User not found' }); }
+  if (db.users[userId]) { db.users[userId].avatar = avatar; saveDB(db); res.json(db.users[userId]); }
+  else { res.status(404).json({ error: 'User not found' }); }
 });
 
 app.get('/api/messages/:userA/:userB', (req, res) => {
   const { userA, userB } = req.params;
   const db = getDB();
-  const uA = String(userA);
-  const uB = String(userB);
-  const thread = db.messages.filter(m => 
-    !m.is_deleted && (
-      (String(m.sender_id) === uA && String(m.receiver_id) === uB) || 
-      (String(m.sender_id) === uB && String(m.receiver_id) === uA)
-    )
-  );
-  res.json(thread);
+  const uA = String(userA); const uB = String(userB);
+  res.json(db.messages.filter(m => !m.is_deleted && ((String(m.sender_id) === uA && String(m.receiver_id) === uB) || (String(m.sender_id) === uB && String(m.receiver_id) === uA))));
 });
 
 app.get('/api/conversations/:userId', (req, res) => {
@@ -102,42 +56,22 @@ app.get('/api/conversations/:userId', (req, res) => {
   const uid = String(userId);
   const db = getDB();
   
-  console.log(`[Conversations] Request for UserID: ${uid}`);
-  console.log(`[Conversations] Total messages in DB: ${db.messages.length}`);
-
+  // Find all unique partners this user has ever messaged
   const chatPartners = new Set();
   db.messages.forEach(m => {
     const s = String(m.sender_id);
     const r = String(m.receiver_id);
     if (s === uid) chatPartners.add(r);
-    if (r === uid) chatPartners.add(s);
+    else if (r === uid) chatPartners.add(s);
   });
 
-  console.log(`[Conversations] Found partners:`, Array.from(chatPartners));
-
   const conversations = Array.from(chatPartners).map(pid => {
-    // Try to find user by ID or by matching ID in values
-    let partner = db.users[pid];
-    if (!partner) {
-      partner = Object.values(db.users).find(u => String(u.id) === pid);
-    }
-    
-    if (!partner) {
-      console.log(`[Conversations] Partner ${pid} not found in db.users`);
-      return null;
-    }
-    
-    const lastMsg = db.messages
-      .filter(m => !m.is_deleted && (
-        (String(m.sender_id) === uid && String(m.receiver_id) === pid) || 
-        (String(m.sender_id) === pid && String(m.receiver_id) === uid)
-      ))
-      .pop();
-    
+    const partner = db.users[pid] || Object.values(db.users).find(u => String(u.id) === pid || String(u.phone) === pid);
+    if (!partner) return null;
+    const lastMsg = db.messages.filter(m => !m.is_deleted && ((String(m.sender_id) === uid && String(m.receiver_id) === pid) || (String(m.sender_id) === pid && String(m.receiver_id) === uid))).pop();
     return { ...partner, lastMessage: lastMsg };
   }).filter(Boolean);
 
-  console.log(`[Conversations] Returning ${conversations.length} conversations`);
   res.json(conversations);
 });
 
@@ -148,72 +82,54 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Socket
-const onlineUsers = new Map();
+const socketMap = new Map(); // socket.id -> user
 io.on('connection', (socket) => {
-  console.log(`[Socket] New connection: ${socket.id}`);
-
   socket.on('join', (user) => {
     if (!user || !user.id) return;
     const uid = String(user.id);
     socket.join(uid);
-    onlineUsers.set(socket.id, { ...user, id: uid });
-    console.log(`[Socket] User ${uid} joined room`);
-    io.emit('presence', Array.from(onlineUsers.values()));
+    socketMap.set(socket.id, { ...user, id: uid });
+    
+    // Deduplicate online users by ID
+    const uniqueOnline = [];
+    const seenIds = new Set();
+    socketMap.forEach(u => {
+      if (!seenIds.has(u.id)) {
+        seenIds.add(u.id);
+        uniqueOnline.push(u);
+      }
+    });
+    io.emit('presence', uniqueOnline);
   });
 
   socket.on('send_message', (msg) => {
     const db = getDB();
-    const newMsg = { 
-      ...msg, 
-      sender_id: String(msg.sender_id),
-      receiver_id: String(msg.receiver_id),
-      id: Date.now(), 
-      created_at: new Date().toISOString(), 
-      status: 'sent', 
-      is_deleted: false 
-    };
+    const newMsg = { ...msg, sender_id: String(msg.sender_id), receiver_id: String(msg.receiver_id), id: Date.now(), created_at: new Date().toISOString(), status: 'sent', is_deleted: false };
     db.messages.push(newMsg);
     saveDB(db);
-    console.log(`[Socket] Message saved: ${newMsg.sender_id} -> ${newMsg.receiver_id}`);
     io.to(newMsg.receiver_id).emit('receive_message', newMsg);
     io.to(newMsg.sender_id).emit('receive_message', newMsg);
   });
 
   socket.on('mark_seen', ({ senderId, receiverId }) => {
     const db = getDB();
-    const sId = String(senderId);
-    const rId = String(receiverId);
+    const sId = String(senderId); const rId = String(receiverId);
     let updated = false;
-    db.messages.forEach(m => {
-      if (String(m.sender_id) === sId && String(m.receiver_id) === rId && m.status !== 'seen') {
-        m.status = 'seen';
-        updated = true;
-      }
-    });
-    if (updated) {
-      saveDB(db);
-      io.to(sId).emit('status_update', { receiverId: rId, status: 'seen' });
-    }
-  });
-
-  socket.on('delete_message', ({ messageId, userId }) => {
-    const db = getDB();
-    const msg = db.messages.find(m => m.id === messageId);
-    if (msg && String(msg.sender_id) === String(userId)) {
-      msg.is_deleted = true;
-      saveDB(db);
-      io.to(String(msg.receiver_id)).emit('message_deleted', messageId);
-      io.to(String(msg.sender_id)).emit('message_deleted', messageId);
-    }
+    db.messages.forEach(m => { if (String(m.sender_id) === sId && String(m.receiver_id) === rId && m.status !== 'seen') { m.status = 'seen'; updated = true; } });
+    if (updated) { saveDB(db); io.to(sId).emit('status_update', { receiverId: rId, status: 'seen' }); }
   });
 
   socket.on('disconnect', () => {
-    const u = onlineUsers.get(socket.id);
-    if (u) { 
-      console.log(`[Socket] User ${u.id} disconnected`);
-      onlineUsers.delete(socket.id); 
-      io.emit('presence', Array.from(onlineUsers.values())); 
-    }
+    socketMap.delete(socket.id);
+    const uniqueOnline = [];
+    const seenIds = new Set();
+    socketMap.forEach(u => {
+      if (!seenIds.has(u.id)) {
+        seenIds.add(u.id);
+        uniqueOnline.push(u);
+      }
+    });
+    io.emit('presence', uniqueOnline);
   });
 });
 
