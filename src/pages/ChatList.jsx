@@ -10,44 +10,60 @@ const ChatList = () => {
   const navigate = useNavigate();
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [recentChats, setRecentChats] = useState([]);
-  const [showProfile, setShowProfile] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showProfile, setShowProfile] = useState(false);
+
+  // Load from LocalStorage for instant visibility on Live
+  const getCachedChats = () => {
+    const cached = localStorage.getItem(`sgram_chats_${user?.id}`);
+    return cached ? JSON.parse(cached) : [];
+  };
 
   const fetchData = useCallback(async () => {
     if (!user?.id) return;
     try {
-      console.log('[Inbox] Fetching conversations for:', user.id);
       const chats = await apiFetch(`/conversations/${user.id}`);
-      console.log('[Inbox] Received chats:', chats.length);
-      setRecentChats(chats);
+      
+      // Merge server chats with local cache to ensure no one disappears
+      const cached = getCachedChats();
+      const combined = [...chats];
+      
+      cached.forEach(c => {
+        if (!combined.some(existing => String(existing.id) === String(c.id))) {
+          combined.push(c);
+        }
+      });
+
+      setRecentChats(combined);
+      localStorage.setItem(`sgram_chats_${user.id}`, JSON.stringify(combined));
       setLoading(false);
     } catch (err) { 
       console.error('[Inbox] Fetch error:', err);
+      setRecentChats(getCachedChats());
       setLoading(false);
     }
   }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
-    
-    // Initial fetch
     fetchData();
-    
-    // Join socket room
     socket.emit('join', user);
     
-    // Listeners
     socket.on('presence', (users) => {
-      const others = users.filter(u => String(u.id) !== String(user.id));
-      setOnlineUsers(others);
+      setOnlineUsers(users.filter(u => String(u.id) !== String(user.id)));
     });
 
     socket.on('receive_message', (msg) => {
-      console.log('[Inbox] New message received, refreshing list...');
-      fetchData();
+      // If we get a message from someone new, add them to cache immediately
+      const cached = getCachedChats();
+      if (!cached.some(c => String(c.id) === String(msg.sender_id))) {
+        // We don't have full user info here, so we refresh from server
+        fetchData();
+      } else {
+        fetchData();
+      }
     });
 
-    // Cleanup
     return () => {
       socket.off('presence');
       socket.off('receive_message');
@@ -131,9 +147,7 @@ const ChatList = () => {
       <div className="p-chats-section">
         <h3 className="p-section-title">Recent Chats</h3>
         <div className="p-chat-scroll">
-          {loading ? (
-            <div className="p-loading">Loading chats...</div>
-          ) : recentChats.length === 0 ? (
+          {recentChats.length === 0 && !loading ? (
             <div className="p-empty-chats">
               <MessageSquare size={48} opacity={0.1} />
               <p>Your inbox is empty</p>
@@ -150,7 +164,7 @@ const ChatList = () => {
                     <h3>{chat.username}</h3>
                     <span>{chat.lastMessage ? new Date(chat.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                   </div>
-                  <p>{chat.lastMessage?.text || (chat.lastMessage?.type === 'audio' ? '🎵 Voice Note' : 'Sent a media file')}</p>
+                  <p>{chat.lastMessage?.text || (chat.lastMessage?.type === 'audio' ? '🎵 Voice Note' : 'Tap to open chat')}</p>
                 </div>
               </div>
             ))
@@ -169,10 +183,10 @@ const ChatList = () => {
               <div className="p-profile-edit">
                 <div className="p-avatar-huge">
                   <img src={user?.avatar} alt="Current Profile" />
-                  <label htmlFor="profile-upload-v2" className="p-cam-btn">
+                  <label htmlFor="profile-upload-final" className="p-cam-btn">
                     <Camera size={26} />
                   </label>
-                  <input id="profile-upload-v2" type="file" accept="image/*" hidden onChange={handleUpdateAvatar} />
+                  <input id="profile-upload-final" type="file" accept="image/*" hidden onChange={handleUpdateAvatar} />
                 </div>
                 <div className="p-user-meta">
                   <h3>{user?.username}</h3>
@@ -217,7 +231,6 @@ const ChatList = () => {
         .p-chat-top h3 { font-size: 16px; font-weight: 700; color: #f4f4f5; }
         .p-chat-top span { font-size: 12px; color: #71717a; }
         .p-chat-info p { font-size: 14px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-        .p-loading { text-align: center; color: #71717a; padding: 20px; font-size: 14px; }
         .p-empty-chats { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #3f3f46; text-align: center; gap: 16px; padding-top: 40px; }
         .p-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; }
         .p-profile-modal { background: #18181b; width: 100%; max-width: 420px; border-radius: 32px; padding: 32px; border: 1px solid rgba(255,255,255,0.1); }
